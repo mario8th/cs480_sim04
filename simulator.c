@@ -126,6 +126,8 @@ OutputStruct *runSimulator( List *pcb, OutputStruct *currOutput,
          currentProcess->state = EXIT;
       }
       currentProcessNode = chooseNextProcess( pcb, conStruct );
+      // Change this so it waits for interrupt if needed
+      // But if it's there's no more processes then break
       if( currentProcessNode == NULL)
       {
          break;
@@ -156,6 +158,9 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
+         // Check input semaphore
+         //    If it is 1, put process into blocked, go into thread
+         //    else go into waiting loop
          timerHelper = createTimerHelper( timerString, currentProcess->processTime );
          pthread_attr_init(&attr);
          pthread_create( &tid, &attr, waitProcess, timerHelper );
@@ -164,6 +169,9 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
          {
             pthread_join( tid, NULL );
          }
+         //else
+         //    move onto next process
+         //    return currOutput and choose next process
          destroyTimerHelper( timerHelper );
 
          currOutput = configureOutput( currOutput, timerString,
@@ -171,6 +179,7 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
+         // remove time from total process time and move on
       }
       else if( currentProcess->current->compLetter == 'O' )
       {
@@ -179,6 +188,9 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
+         // Check Output semaphore
+         //    If it is 1, put process into blocked, go into thread
+         //    else go into waiting loop
          timerHelper = createTimerHelper( timerString, currentProcess->processTime );
          pthread_attr_init(&attr);
          pthread_create( &tid, &attr, waitProcess, timerHelper );
@@ -187,6 +199,9 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
          {
             pthread_join( tid, NULL );
          }
+         //else
+         //    move onto next process
+         //    return currOutput and choose next process
          destroyTimerHelper( timerHelper );
 
          currOutput = configureOutput( currOutput, timerString,
@@ -194,11 +209,15 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
+         // remove time from total process time and move on
       }
       else if( currentProcess->current->compLetter == 'M' )
       {
          if( stringComp(currentProcess->current->opString, "allocate") == True )
          {
+            // check memAllocate semaphore
+            //    if 0, loop
+            //    else allocate mem
             mmuHelper = mmuAllocate( mmu, currentProcess->current, conStruct,
                                      currOutput, togle,
                                      currentProcess->processNum, timerString );
@@ -235,6 +254,10 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
+         // If not SJF-N or FCFS-N, calculate total time with quantum
+         // and put that into timerHelper
+         // Unless time left is < quantum, then put in time left
+         // update total process time
          timerHelper = createTimerHelper( timerString, currentProcess->processTime );
          pthread_attr_init(&attr);
          pthread_create( &tid, &attr, waitProcess, timerHelper );
@@ -242,7 +265,7 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
          destroyTimerHelper( timerHelper );
 
          currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Operation Start\n",
+                                       "Time:%s, Process %d, %s Operation End\n",
                                        currentProcess->processNum,
                                        currentProcess->current->opString,
                                        NULL, -1, togle );
