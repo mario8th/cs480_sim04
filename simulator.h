@@ -37,12 +37,6 @@ typedef struct ProcessControlBlock
    int state;
 }ProcessControlBlock;
 
-typedef struct TimerHelper
-{
-   int waitTime;
-   char *timerString;
-}TimerHelper;
-
 typedef struct Semaphores
 {
    // All start 1, 0 when in use
@@ -54,6 +48,17 @@ typedef struct Semaphores
    int outputFile;
 }Semaphores;
 
+typedef struct IOHelper
+{
+   OutputStruct *currOutput;
+   char *timerString;
+   ListNode *currProcess;
+   ProcessControlBlock *currOP;
+   Semaphores *semaphores;
+   List* interruptQueue;
+   Boolean togle;
+}IOHelper;
+
 // states for pcb processes
 typedef enum { NEW, READY, RUNNING, BLOCKED, EXIT } state;
 
@@ -62,10 +67,14 @@ ReturnMessage startSimulator( ConfigStruct*, List* );
 OutputStruct *runSimulator( List*, OutputStruct*, char*, Boolean togle,
                             ConfigStruct*, List* );
 
-OutputStruct *runProcess( ProcessControlBlock*, OutputStruct*, char*, Boolean,
-                          ConfigStruct*, List* );
+OutputStruct *runProcess( ListNode*, ProcessControlBlock*, OutputStruct*, char*,
+                          Semaphores*, Boolean, ConfigStruct*, List*, List* );
 
-void *waitProcess( void* );
+void *runIO( void* );
+
+void *runO( void* );
+
+void waitProcess( int, char* );
 
 OutputStruct *configureOutput( OutputStruct*, char*, char*, int,
                                char*, char*, int, Boolean );
@@ -90,11 +99,16 @@ ProcessControlBlock *createPCBStruct( void );
 
 void destroyPCB( ProcessControlBlock* );
 
-TimerHelper *createTimerHelper( char*, int );
+IOHelper *createIOHelper( OutputStruct*, char*, ListNode*,
+                          ProcessControlBlock*, Semaphores*, List*, Boolean );
 
-void destroyTimerHelper( TimerHelper* );
+void destroyIOHelper( IOHelper* );
 
-ListNode *chooseNextProcess( List* , ConfigStruct* );
+Semaphores *createSemaphores( void );
+
+void destroySemaphores( Semaphores* );
+
+ListNode *chooseNextProcess( List* , ConfigStruct*, List* );
 
 ListNode *chooseNextFCFSN( List* );
 

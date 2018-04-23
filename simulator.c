@@ -97,130 +97,113 @@ OutputStruct *runSimulator( List *pcb, OutputStruct *currOutput,
                            char *timerString, Boolean togle,
                            ConfigStruct *conStruct, List *mmu )
 {
-   //List *InterruptQueue = list_create();
-   ListNode *currentProcessNode;
-   ProcessControlBlock *currentProcess;
-   currentProcessNode = chooseNextProcess( pcb, conStruct );
-   currentProcess = currentProcessNode->value;
+   List *interruptQueue = list_create();
+   ListNode *currProcess;
+   ProcessControlBlock *currOP;
+   Semaphores *semaphores = createSemaphores();
+   currProcess = chooseNextProcess( pcb, conStruct, interruptQueue );
+   currOP = currProcess->value;
    while( 1 )
    {
       //Select Process
-      if( currentProcess->processNum != -1 )
+      if( currOP->processNum != -1 )
       {
          currOutput = configureOutput( currOutput, timerString,
                   "Time:%s, %s Strategy selects Process %d with time: %d mSec\n",
-                  currentProcess->processNum, NULL, conStruct->cpuScheduleCode,
-                  currentProcess->processTime, togle );
+                  currOP->processNum, NULL, conStruct->cpuScheduleCode,
+                  currOP->processTime, togle );
 
          currOutput = configureOutput( currOutput, timerString,
                                     "Time:%s, Process %d set in Running State\n",
-                              currentProcess->processNum, NULL, NULL, -1, togle );
-         currOutput = runProcess( currentProcess, currOutput, timerString,
-                                  togle, conStruct, mmu );
+                              currOP->processNum, NULL, NULL, -1, togle );
+         currOutput = runProcess( currProcess, currOP, currOutput, timerString,
+                                  semaphores, togle, conStruct, mmu, interruptQueue );
          currOutput = configureOutput( currOutput, timerString,
                                      "Time:%s, Process %d, set in Exit State\n",
-                            currentProcess->processNum, NULL, NULL, -1, togle );
+                            currOP->processNum, NULL, NULL, -1, togle );
       }
       else
       {
-         currentProcess->state = EXIT;
+         currOP->state = EXIT;
       }
-      currentProcessNode = chooseNextProcess( pcb, conStruct );
+      currProcess = chooseNextProcess( pcb, conStruct, interruptQueue );
       // Change this so it waits for interrupt if needed
       // But if it's there's no more processes then break
-      if( currentProcessNode == NULL)
+      if( currProcess == NULL && interruptQueue->count == 0 )
       {
          break;
       }
-      currentProcess = currentProcessNode->value;
+      currOP = currProcess->value;
    }
    return currOutput;
 }
 
 // runs a specific process
-OutputStruct *runProcess( ProcessControlBlock *currentProcess,
-                          OutputStruct *currOutput,
-                          char *timerString, Boolean togle,
-                          ConfigStruct *conStruct, List *mmu )
+OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
+                          OutputStruct *currOutput, char *timerString,
+                          Semaphores *semaphores, Boolean togle,
+                          ConfigStruct *conStruct, List *mmu, List *interruptQueue )
 {
    pthread_t tid;
    pthread_attr_t attr;
    MMUHelper *mmuHelper;
    ReturnMessage returnMessage;
-   TimerHelper *timerHelper;
+   IOHelper *ioHelper;
+   ProcessControlBlock *cpValue = currProcess->value;
+   int waitTime;
 
    while ( 1 )
    {
-      if( currentProcess->current->compLetter == 'I' )
+      while( currOP->state == EXIT )
       {
-         currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Input Start\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
-                                       NULL, -1, togle );
-         // Check input semaphore
-         //    If it is 1, put process into blocked, go into thread
-         //    else go into waiting loop
-         timerHelper = createTimerHelper( timerString, currentProcess->processTime );
+         currOP = currOP->next;
+      }
+      if( currOP->current->compLetter == 'I' )
+      {
+         ioHelper = createIOHelper( currOutput, timerString, currProcess,
+                                    currOP, semaphores, interruptQueue, togle );
+         setPCBState( cpValue, BLOCKED, currOP->processNum + 1 );
          pthread_attr_init(&attr);
-         pthread_create( &tid, &attr, waitProcess, timerHelper );
+         pthread_create( &tid, &attr, runIO, ioHelper );
          if( stringComp( conStruct->cpuScheduleCode, "SJF-N" ) == True ||
              stringComp( conStruct->cpuScheduleCode, "FCFS-N" ) == True )
          {
             pthread_join( tid, NULL );
          }
-         //else
-         //    move onto next process
-         //    return currOutput and choose next process
-         destroyTimerHelper( timerHelper );
-
-         currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Input End\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
-                                       NULL, -1, togle );
-         // remove time from total process time and move on
+         else
+         {
+            return currOutput;
+         }
       }
-      else if( currentProcess->current->compLetter == 'O' )
+      else if( currOP->current->compLetter == 'O' )
       {
-         currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Output Start\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
-                                       NULL, -1, togle );
-         // Check Output semaphore
-         //    If it is 1, put process into blocked, go into thread
-         //    else go into waiting loop
-         timerHelper = createTimerHelper( timerString, currentProcess->processTime );
+         ioHelper = createIOHelper( currOutput, timerString, currProcess,
+                                    currOP, semaphores, interruptQueue, togle );
+         setPCBState( cpValue, BLOCKED, currOP->processNum + 1 );
          pthread_attr_init(&attr);
-         pthread_create( &tid, &attr, waitProcess, timerHelper );
+         pthread_create( &tid, &attr, runIO, ioHelper );
          if( stringComp( conStruct->cpuScheduleCode, "SJF-N" ) == True ||
              stringComp( conStruct->cpuScheduleCode, "FCFS-N" ) == True )
          {
             pthread_join( tid, NULL );
          }
-         //else
-         //    move onto next process
-         //    return currOutput and choose next process
-         destroyTimerHelper( timerHelper );
-
-         currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Output End\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
-                                       NULL, -1, togle );
-         // remove time from total process time and move on
-      }
-      else if( currentProcess->current->compLetter == 'M' )
-      {
-         if( stringComp(currentProcess->current->opString, "allocate") == True )
+         else
          {
-            // check memAllocate semaphore
-            //    if 0, loop
-            //    else allocate mem
-            mmuHelper = mmuAllocate( mmu, currentProcess->current, conStruct,
+            return currOutput;
+         }
+      }
+      else if( currOP->current->compLetter == 'M' )
+      {
+         if( stringComp(currOP->current->opString, "allocate") == True )
+         {
+            while( semaphores->memoryAllocate == 0 )
+            {
+               // wait
+            }
+            semaphores->memoryAllocate = 0;
+            mmuHelper = mmuAllocate( mmu, currOP->current, conStruct,
                                      currOutput, togle,
-                                     currentProcess->processNum, timerString );
+                                     currOP->processNum, timerString );
             currOutput = mmuHelper->output;
             returnMessage = mmuHelper->returnMessage;
             destroyMMUHelper( mmuHelper );
@@ -228,14 +211,14 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
             {
                currOutput = configureOutput( currOutput, timerString,
                      "Time:%s, Process %d, Segmentation Fault - Process ended\n",
-                     currentProcess->processNum, NULL, NULL, -1, togle );
+                     currOP->processNum, NULL, NULL, -1, togle );
             }
          }
          else
          {
-            mmuHelper = mmuAccess( mmu, currentProcess->current, conStruct,
+            mmuHelper = mmuAccess( mmu, currOP->current, conStruct,
                                     currOutput, togle,
-                                    currentProcess->processNum, timerString );
+                                    currOP->processNum, timerString );
             currOutput = mmuHelper->output;
             returnMessage = mmuHelper->returnMessage;
             destroyMMUHelper( mmuHelper );
@@ -243,88 +226,155 @@ OutputStruct *runProcess( ProcessControlBlock *currentProcess,
             {
                currOutput = configureOutput( currOutput, timerString,
                      "Time:%s, Process %d, Segmentation Fault - Process ended\n",
-                     currentProcess->processNum, NULL, NULL, -1, togle );
+                     currOP->processNum, NULL, NULL, -1, togle );
             }
          }
+         semaphores->memoryAllocate = 1;
       }
-      else if( currentProcess->current->compLetter == 'P' )
+      else if( currOP->current->compLetter == 'P' )
       {
          currOutput = configureOutput( currOutput, timerString,
                                        "Time:%s, Process %d, %s Operation Start\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
+                                       currOP->processNum,
+                                       currOP->current->opString,
                                        NULL, -1, togle );
-         // If not SJF-N or FCFS-N, calculate total time with quantum
-         // and put that into timerHelper
-         // Unless time left is < quantum, then put in time left
-         // update total process time
-         timerHelper = createTimerHelper( timerString, currentProcess->processTime );
-         pthread_attr_init(&attr);
-         pthread_create( &tid, &attr, waitProcess, timerHelper );
-         pthread_join( tid, NULL );
-         destroyTimerHelper( timerHelper );
+         while( 1 )
+         {
+            if( stringComp( conStruct->cpuScheduleCode, "SJF-N" ) == False &&
+                stringComp( conStruct->cpuScheduleCode, "FCFS-N" ) == False )
+            {
+               if( currOP->processTime < conStruct->quantumTime * conStruct->processCycle )
+               {
+                  waitTime = currOP->processTime;
+               }
+               else
+               {
+                  waitTime = conStruct->quantumTime * conStruct->processCycle;
+               }
+               cpValue->processTime -= waitTime;
+               currOP->processTime -= waitTime;
+            }
+            waitProcess( waitTime, timerString );
+            if( currOP->processTime == 0 || interruptQueue->count > 0 )
+            {
+               break;
+            }
+         }
 
          currOutput = configureOutput( currOutput, timerString,
                                        "Time:%s, Process %d, %s Operation End\n",
-                                       currentProcess->processNum,
-                                       currentProcess->current->opString,
+                                       currOP->processNum,
+                                       currOP->current->opString,
                                        NULL, -1, togle );
       }
 
-      currentProcess->state = EXIT;
-      if( currentProcess->next == NULL)
+      currOP->state = EXIT;
+      if( currOP->next == NULL)
       {
          return currOutput;
       }
-      if( currentProcess->next->processNum != currentProcess->processNum )
+      if( currOP->next->processNum != currOP->processNum )
       {
          return currOutput;
       }
-      currentProcess = currentProcess->next;
+      currOP = currOP->next;
    }
 }
 
-void *waitProcess( void* timerHelperVoid )
+void *runIO( void *voidIOHelper )
 {
-   TimerHelper *timerHelper = timerHelperVoid;
-   char *timerString = timerHelper->timerString;
-   double finalTime = accessTimer( 1, timerString ) + ( (double)timerHelper->waitTime / 1000 );
-   while( accessTimer( 1, timerHelper->timerString ) < finalTime )
+   char *outputStart;
+   char *outputEnd;
+   int semaphore;
+   IOHelper *ioHelper = voidIOHelper;
+   OutputStruct *currOutput = ioHelper->currOutput;
+   char *timerString = ioHelper->timerString;
+   ListNode *currProcess = ioHelper->currProcess;
+   ProcessControlBlock *currOP = ioHelper->currOP;
+   Semaphores *semaphores = ioHelper->semaphores;
+   List* interruptQueue = ioHelper->interruptQueue;
+   Boolean togle = ioHelper->togle;
+   ProcessControlBlock *cpValue = currProcess->value;
+   if( currOP->current->compLetter == 'I')
+   {
+      outputStart = "Time:%s, Process %d, %s Input Start\n";
+      outputEnd = "Time:%s, Process %d, %s Input End\n";
+      semaphore = semaphores->input;
+   }
+   else
+   {
+      outputStart = "Time:%s, Process %d, %s Output Start\n";
+      outputEnd = "Time:%s, Process %d, %s Output End\n";
+      semaphore = semaphores->output;
+   }
+
+   currOutput = configureOutput( currOutput, timerString, outputStart,
+                                 currOP->processNum, currOP->current->opString,
+                                 NULL, -1, togle );
+   cpValue->processTime = cpValue->processTime - currOP->processTime;
+   while( semaphore == 0 )
+   {
+      // wait
+   }
+   semaphores->input = 0;
+   waitProcess( currOP->processTime, timerString );
+   semaphores->input = 1;
+   currOutput = configureOutput( currOutput, timerString, outputEnd,
+                                 currOP->processNum, currOP->current->opString,
+                                 NULL, -1, togle );
+   // put into interrupt queue
+   currOP->state = EXIT;
+   setPCBState( cpValue, READY, cpValue->processNum + 1 );
+   while( semaphores->modifyInterrupt == 0 )
+   {
+      // wait
+   }
+   semaphores->modifyInterrupt = 0;
+   list_insert_after( interruptQueue, currProcess, NULL );
+   semaphores->modifyInterrupt = 1;
+   destroyIOHelper( ioHelper );
+   return currOutput;
+}
+
+void waitProcess( int waitTime, char *timerString )
+{
+   double finalTime = accessTimer( 1, timerString ) + ( (double)waitTime / 1000 );
+   while( accessTimer( 1, timerString ) < finalTime )
    {
       //wait
    }
-   return timerHelperVoid;
+   return;
 }
 
 OutputStruct *configureOutput( OutputStruct *currOutput, char *timerString,
                                char* printString, int process, char *opString,
                                char* scheduleCode, int processTime, Boolean togle )
+{
+   char outputString[80];
+   currOutput->next = createOutputStruct();
+   currOutput = currOutput->next;
+   accessTimer( 1, timerString );
+   if( process == -1 )
    {
-      char outputString[80];
-      currOutput->next = createOutputStruct();
-      currOutput = currOutput->next;
-      accessTimer( 1, timerString );
-      if( process == -1 )
-      {
-         snprintf( outputString, 80, printString, timerString );
-      }
-      else if( scheduleCode != NULL )
-      {
-         snprintf( outputString, 80, printString, timerString,
-                   scheduleCode, process, processTime );
-      }
-      else if( opString != NULL )
-      {
-         snprintf( outputString, 80, printString, timerString, process, opString );
-      }
-      else
-      {
-         snprintf( outputString, 80, printString, timerString, process );
-      }
-      stringCopy( outputString, currOutput->value );
-      print( outputString, togle );
-      return currOutput;
+      snprintf( outputString, 80, printString, timerString );
    }
+   else if( scheduleCode != NULL )
+   {
+      snprintf( outputString, 80, printString, timerString,
+                scheduleCode, process, processTime );
+   }
+   else if( opString != NULL )
+   {
+      snprintf( outputString, 80, printString, timerString, process, opString );
+   }
+   else
+   {
+      snprintf( outputString, 80, printString, timerString, process );
+   }
+   stringCopy( outputString, currOutput->value );
+   print( outputString, togle );
+   return currOutput;
+}
 
 // Writes saved output from pcb to file
 void writeOutput( OutputStruct *outputList, ConfigStruct *conStruct )
@@ -479,7 +529,10 @@ void setPCBState( ProcessControlBlock *pcb, int state, int nextProcess )
 {
    while( 1 )
    {
-      pcb->state = state;
+      if( pcb->state != EXIT )
+      {
+         pcb->state = state;
+      }
       if( pcb->next == NULL ||
           pcb->next->processNum == nextProcess )
       {
@@ -511,21 +564,45 @@ void destroyPCB( ProcessControlBlock *pcb )
    return;
 }
 
-TimerHelper *createTimerHelper( char *timerString, int waitTime )
+IOHelper *createIOHelper( OutputStruct *currOutput, char *timerString,
+                          ListNode *currProcess, ProcessControlBlock *currOP,
+                          Semaphores *semaphores, List *interruptQueue, Boolean togle )
 {
-   TimerHelper *timerHelper = malloc( sizeof( TimerHelper ) );
-   timerHelper->timerString = timerString;
-   timerHelper->waitTime = waitTime;
-   return timerHelper;
+   IOHelper *ioHelper = malloc( sizeof( IOHelper ) );
+   ioHelper->currOutput = currOutput;
+   ioHelper->timerString = timerString;
+   ioHelper->currProcess = currProcess;
+   ioHelper->currOP = currOP;
+   ioHelper->semaphores = semaphores;
+   ioHelper->interruptQueue = interruptQueue;
+   ioHelper->togle = togle;
+   return ioHelper;
 
 }
 
-void destroyTimerHelper( TimerHelper *timerHelper )
+void destroyIOHelper( IOHelper *ioHelper )
 {
-   free( timerHelper );
+   free( ioHelper );
 }
 
-ListNode *chooseNextProcess( List *pcb, ConfigStruct *conStruct )
+Semaphores *createSemaphores( void )
+{
+   Semaphores *semaphores = malloc( sizeof( Semaphores ) );
+   semaphores->input = 1;
+   semaphores->output = 1;
+   semaphores->memoryAllocate = 1;
+   semaphores->operation = 1;
+   semaphores->modifyInterrupt = 1;
+   semaphores->outputFile = 1;
+   return semaphores;
+}
+
+void destroySemaphores( Semaphores *semaphores )
+{
+   free( semaphores );
+}
+
+ListNode *chooseNextProcess( List *pcb, ConfigStruct *conStruct, List* interruptQueue )
 {
    char *cpuSchedule = conStruct->cpuScheduleCode;
    if ( stringComp( cpuSchedule, "FCFS-N" ) == True )
