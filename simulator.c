@@ -103,6 +103,7 @@ OutputStruct *runSimulator( List *pcb, OutputStruct *currOutput,
    Semaphores *semaphores = createSemaphores();
    currProcess = chooseNextProcess( pcb, conStruct, interruptQueue );
    currOP = currProcess->value;
+
    while( 1 )
    {
       //Select Process
@@ -116,22 +117,47 @@ OutputStruct *runSimulator( List *pcb, OutputStruct *currOutput,
          currOutput = configureOutput( currOutput, timerString,
                                     "Time:%s, Process %d set in Running State\n",
                               currOP->processNum, NULL, NULL, -1, togle );
-         currOutput = runProcess( currProcess, currOP, currOutput, timerString,
-                                  semaphores, togle, conStruct, mmu, interruptQueue );
-         currOutput = configureOutput( currOutput, timerString,
-                                     "Time:%s, Process %d, set in Exit State\n",
-                            currOP->processNum, NULL, NULL, -1, togle );
+         currOP = runProcess( currProcess, currOP, currOutput, timerString,
+                              semaphores, togle, conStruct, mmu, interruptQueue, pcb );
+         //printf("process compLetter: %c\n",currOP->current->compLetter);
+         if( currOP->current->compLetter == 'A' )
+         {
+            setPCBState( currProcess->value, EXIT, currOP->processNum + 1 );
+            currOutput = configureOutput( currOutput, timerString,
+                                        "Time:%s, Process %d, set in Exit State\n",
+                                        currOP->processNum, NULL, NULL, -1, togle );
+         }
+
       }
       else
       {
          currOP->state = EXIT;
       }
       currProcess = chooseNextProcess( pcb, conStruct, interruptQueue );
-      // Change this so it waits for interrupt if needed
-      // But if it's there's no more processes then break
       if( currProcess == NULL && interruptQueue->count == 0 )
       {
-         break;
+         currProcess = pcb->first;
+         currOP = currProcess->value;
+         while( 1 )
+         {
+            if( currOP->state != EXIT )
+            {
+               break;
+            }
+            if( currOP->next == NULL )
+            {
+               return currOutput;
+            }
+            currOP = currOP->next;
+         }
+         currOutput = configureOutput( currOutput, timerString,
+                                     "Time:%s, CPU Idle\n",
+                                     -1, NULL, NULL, -1, togle );
+         while( interruptQueue->count == 0 )
+         {
+            // wait
+         }
+         currProcess = chooseNextProcess( pcb, conStruct, interruptQueue );
       }
       currOP = currProcess->value;
    }
@@ -139,10 +165,11 @@ OutputStruct *runSimulator( List *pcb, OutputStruct *currOutput,
 }
 
 // runs a specific process
-OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
-                          OutputStruct *currOutput, char *timerString,
-                          Semaphores *semaphores, Boolean togle,
-                          ConfigStruct *conStruct, List *mmu, List *interruptQueue )
+ProcessControlBlock *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
+                                 OutputStruct *currOutput, char *timerString,
+                                 Semaphores *semaphores, Boolean togle,
+                                 ConfigStruct *conStruct, List *mmu,
+                                 List *interruptQueue, List *pcb )
 {
    pthread_t tid;
    pthread_attr_t attr;
@@ -151,7 +178,7 @@ OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
    IOHelper *ioHelper;
    ProcessControlBlock *cpValue = currProcess->value;
    int waitTime;
-
+   currOP->state = EXIT;
    while ( 1 )
    {
       while( currOP->state == EXIT )
@@ -169,10 +196,12 @@ OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
              stringComp( conStruct->cpuScheduleCode, "FCFS-N" ) == True )
          {
             pthread_join( tid, NULL );
+            list_destroy( interruptQueue );
+            interruptQueue = list_create();
          }
          else
          {
-            return currOutput;
+            return currOP;
          }
       }
       else if( currOP->current->compLetter == 'O' )
@@ -186,10 +215,12 @@ OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
              stringComp( conStruct->cpuScheduleCode, "FCFS-N" ) == True )
          {
             pthread_join( tid, NULL );
+            list_destroy( interruptQueue );
+            interruptQueue = list_create();
          }
          else
          {
-            return currOutput;
+            return currOP;
          }
       }
       else if( currOP->current->compLetter == 'M' )
@@ -224,6 +255,7 @@ OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
             destroyMMUHelper( mmuHelper );
             if( returnMessage == SEGFAULT )
             {
+               setPCBState( currOP, EXIT, currOP->processNum + 1 );
                currOutput = configureOutput( currOutput, timerString,
                      "Time:%s, Process %d, Segmentation Fault - Process ended\n",
                      currOP->processNum, NULL, NULL, -1, togle );
@@ -251,31 +283,57 @@ OutputStruct *runProcess( ListNode *currProcess, ProcessControlBlock *currOP,
                {
                   waitTime = conStruct->quantumTime * conStruct->processCycle;
                }
-               cpValue->processTime -= waitTime;
-               currOP->processTime -= waitTime;
+               if( stringComp( conStruct->cpuScheduleCode, "RR-P" ) == True )
+               {
+                  list_insert_after( pcb, list_remove_node( pcb, pcb->first ), NULL );
+               }
             }
+            else
+            {
+               waitTime = currOP->processTime;
+            }
+            cpValue->processTime -= waitTime;
+            currOP->processTime -= waitTime;
             waitProcess( waitTime, timerString );
             if( currOP->processTime == 0 || interruptQueue->count > 0 )
             {
                break;
             }
          }
-
-         currOutput = configureOutput( currOutput, timerString,
-                                       "Time:%s, Process %d, %s Operation End\n",
-                                       currOP->processNum,
-                                       currOP->current->opString,
-                                       NULL, -1, togle );
+         if( interruptQueue->count > 0 )
+         {
+            currOP = interruptQueue->first->value;
+            currOutput = configureOutput( currOutput, timerString,
+                                          "Time:%s, Interrupt, Process %d\n",
+                                          currOP->processNum,
+                                          NULL,
+                                          NULL, -1, togle );
+            currOP = currProcess->value;
+            setPCBState( currOP, READY, currOP->processNum + 1 );
+            currOutput = configureOutput( currOutput, timerString,
+                                       "Time:%s, Process %d set in Ready State\n",
+                                       currOP->processNum, NULL, NULL, -1, togle );
+            return currOP;
+         }
+         else
+         {
+            currOP->state = EXIT;
+            currOutput = configureOutput( currOutput, timerString,
+                                          "Time:%s, Process %d, %s Operation End\n",
+                                          currOP->processNum,
+                                          currOP->current->opString,
+                                          NULL, -1, togle );
+         }
       }
 
-      currOP->state = EXIT;
+
       if( currOP->next == NULL)
       {
-         return currOutput;
+         return currOP;
       }
       if( currOP->next->processNum != currOP->processNum )
       {
-         return currOutput;
+         return currOP;
       }
       currOP = currOP->next;
    }
@@ -330,7 +388,7 @@ void *runIO( void *voidIOHelper )
       // wait
    }
    semaphores->modifyInterrupt = 0;
-   list_insert_after( interruptQueue, currProcess, NULL );
+   list_insert_after( interruptQueue, list_create_node( currProcess->value ), NULL );
    semaphores->modifyInterrupt = 1;
    destroyIOHelper( ioHelper );
    return currOutput;
@@ -613,13 +671,17 @@ ListNode *chooseNextProcess( List *pcb, ConfigStruct *conStruct, List* interrupt
    {
       return chooseNextSJFN( pcb );
    }
+   else if( interruptQueue->count < 0 )
+   {
+      return list_remove_node( interruptQueue, interruptQueue->first );
+   }
    else if( stringComp( cpuSchedule, "SRTF-P" ) == True )
    {
-      return NULL;//todo sim04
+      return chooseNextSRTFP( pcb );
    }
    else if( stringComp( cpuSchedule, "FCFS-P" ) == True )
    {
-      return NULL;//todo sim04
+      return chooseNextFCFSP( pcb );
    }
    else if( stringComp( cpuSchedule, "RR-P" ) == True )
    {
@@ -638,8 +700,6 @@ ListNode *chooseNextFCFSN( List *pcb )
       {
          break;
       }
-
-
       if( currNode->next == NULL )
       {
          currNode = NULL;
@@ -677,4 +737,74 @@ ListNode *chooseNextSJFN( List *pcb )
       currPCB = currNode->value;
    }
    return shortestNode;
+}
+
+ListNode *chooseNextFCFSP( List *pcb )
+{
+   ListNode *currNode = pcb->first;
+   ProcessControlBlock *currPCB = currNode->value;
+   while( 1 )
+   {
+      if( currPCB->state == 1)
+      {
+         break;
+      }
+      if( currNode->next == NULL )
+      {
+         currNode = NULL;
+         break;
+      }
+      currNode = currNode->next;
+      currPCB = currNode->value;
+   }
+   return currNode;
+}
+
+ListNode *chooseNextSRTFP( List *pcb )
+{
+   ListNode *shortestNode = NULL;
+   int shortestTime = 999999999; //very big number
+   ListNode *currNode = pcb->first;
+   ProcessControlBlock *currPCB = currNode->value;
+
+   while ( 1 )
+   {
+
+      if( ( currPCB->state == 1 ) && ( currPCB->processTime < shortestTime ) )
+      {
+
+         shortestNode = currNode;
+         shortestTime = currPCB->processTime;
+      }
+
+      if( currNode->next == NULL )
+      {
+         break;
+      }
+
+      currNode = currNode->next;
+      currPCB = currNode->value;
+   }
+   return shortestNode;
+}
+
+ListNode *chooseNextRRP( List *pcb )
+{
+   ListNode *currNode = pcb->first;
+   ProcessControlBlock *currPCB = currNode->value;
+   while( 1 )
+   {
+      if( currPCB->state == 1)
+      {
+         break;
+      }
+      if( currNode->next == NULL )
+      {
+         currNode = NULL;
+         break;
+      }
+      currNode = currNode->next;
+      currPCB = currNode->value;
+   }
+   return currNode;
 }

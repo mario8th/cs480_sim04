@@ -67,8 +67,8 @@ ReturnMessage startSimulator( ConfigStruct*, List* );
 OutputStruct *runSimulator( List*, OutputStruct*, char*, Boolean togle,
                             ConfigStruct*, List* );
 
-OutputStruct *runProcess( ListNode*, ProcessControlBlock*, OutputStruct*, char*,
-                          Semaphores*, Boolean, ConfigStruct*, List*, List* );
+ProcessControlBlock *runProcess( ListNode*, ProcessControlBlock*, OutputStruct*, char*,
+                          Semaphores*, Boolean, ConfigStruct*, List*, List*, List* );
 
 void *runIO( void* );
 
@@ -113,5 +113,11 @@ ListNode *chooseNextProcess( List* , ConfigStruct*, List* );
 ListNode *chooseNextFCFSN( List* );
 
 ListNode *chooseNextSJFN( List* );
+
+ListNode *chooseNextFCFSP( List* );
+
+ListNode *chooseNextSRTFP( List* );
+
+ListNode *chooseNextRRP( List* );
 
 #endif
